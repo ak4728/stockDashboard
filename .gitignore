@@ -1,0 +1,25 @@
+# Private files — never commit these
+config.json
+individual_holdings.json
+
+# Environment / secrets
+.env
+*.pem
+*.key
+
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
+logs/
