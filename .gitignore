@@ -1,6 +1,7 @@
 # Private files — never commit these
 config.json
 individual_holdings.json
+.secret_key
 
 # Environment / secrets
 .env

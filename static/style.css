@@ -1,0 +1,296 @@
+/* Stocks Dashboard — tokens follow the validated reference palette.
+   Light is the base; dark redefines the same roles via prefers-color-scheme. */
+
+:root {
+  color-scheme: light;
+  --page:           #f9f9f7;
+  --surface:        #fcfcfb;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #898781;
+  --grid:           #e1e0d9;
+  --baseline:       #c3c2b7;
+  --border:         rgba(11, 11, 11, 0.10);
+  --series-1:       #2a78d6;   /* allocation bars, sparklines */
+  --delta-up:       #006300;   /* success text on light surface */
+  --delta-down:     #d03b3b;
+  --bar-up:         #0ca30c;   /* status good — gain marks */
+  --bar-down:       #d03b3b;   /* status critical — loss marks */
+  --focus:          #2a78d6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page:           #0d0d0d;
+    --surface:        #1a1a19;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --grid:           #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255, 255, 255, 0.10);
+    --series-1:       #3987e5;
+    --delta-up:       #0ca30c;
+    --delta-down:     #e66767;
+    --bar-up:         #0ca30c;
+    --bar-down:       #d03b3b;
+    --focus:          #3987e5;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--text-primary);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+h1, h2 { margin: 0; font-weight: 600; }
+a { color: inherit; }
+button { font: inherit; }
+
+/* ---- Topbar ---- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.topbar-title { display: flex; align-items: center; gap: 10px; }
+.topbar-logo { font-size: 22px; }
+.topbar h1 { font-size: 18px; }
+.topbar-meta { display: flex; align-items: center; gap: 10px; }
+.updated { color: var(--text-muted); font-size: 13px; }
+
+.btn-ghost {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn-ghost:hover { background: var(--grid); }
+.btn-ghost:focus-visible,
+input:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ---- Layout ---- */
+
+.layout {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px 24px 48px;
+  display: grid;
+  gap: 18px;
+  transition: opacity 0.2s ease;
+}
+.layout[data-loading="true"] { opacity: 0.55; }  /* hold previous render, no skeleton flash */
+
+.load-error {
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--delta-down);
+  border-radius: 8px;
+  color: var(--delta-down);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px 20px;
+  min-width: 0;
+}
+.card-title { font-size: 14px; color: var(--text-secondary); margin-bottom: 12px; }
+.card-sub { font-size: 12px; color: var(--text-muted); font-weight: 400; margin-left: 6px; }
+
+/* ---- KPI tiles ---- */
+
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 18px;
+}
+.tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 20px;
+}
+.tile-label {
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+.tile-value {
+  margin: 6px 0 2px;
+  font-size: 28px;
+  font-weight: 600;
+  /* proportional figures on standalone numbers — no tabular-nums here */
+}
+.tile-value.hero { font-size: 34px; }
+.tile-delta { margin: 0; font-size: 13px; color: var(--text-secondary); }
+
+.up   { color: var(--delta-up); }
+.down { color: var(--delta-down); }
+
+/* ---- Charts ---- */
+
+.chart-grid, .news-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 18px;
+}
+.chart { width: 100%; }
+.chart svg { display: block; width: 100%; height: auto; }
+
+.chart-note  { margin: 8px 0 0; font-size: 12px; color: var(--text-muted); }
+.bar-label   { font-size: 12px; fill: var(--text-secondary); }
+.bar-value   { font-size: 12px; fill: var(--text-secondary); }
+.axis-line   { stroke: var(--baseline); stroke-width: 1; }
+
+/* ---- Holdings table ---- */
+
+.table-wrap { overflow-x: auto; }
+.holdings {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.holdings th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--baseline);
+  white-space: nowrap;
+}
+.holdings td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--grid);
+  white-space: nowrap;
+}
+.holdings tfoot td {
+  border-bottom: none;
+  border-top: 1px solid var(--baseline);
+  font-weight: 600;
+}
+.holdings .num { text-align: right; font-variant-numeric: tabular-nums; }
+.holdings .sym { font-weight: 600; }
+.stale-dot { color: var(--text-muted); font-size: 11px; margin-left: 4px; }
+
+.spark { display: block; }
+.spark path { fill: none; stroke: var(--series-1); stroke-width: 1.5; }
+
+/* ---- News ---- */
+
+.news-list { list-style: none; margin: 0; padding: 0; }
+.news-list li {
+  padding: 9px 0;
+  border-bottom: 1px solid var(--grid);
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+.news-list li:last-child { border-bottom: none; }
+.news-ticker {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+}
+.news-title { text-decoration: none; }
+.news-title:hover { text-decoration: underline; }
+.news-meta { display: block; font-size: 12px; color: var(--text-muted); margin-top: 1px; }
+
+/* ---- Tooltip ---- */
+
+.tooltip {
+  position: fixed;
+  z-index: 10;
+  pointer-events: none;
+  background: var(--surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  padding: 8px 12px;
+  font-size: 13px;
+  max-width: 260px;
+}
+.tooltip .tt-title { font-weight: 600; }
+.tooltip .tt-row { color: var(--text-secondary); }
+
+/* ---- Login ---- */
+
+.login-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.login-card {
+  width: min(360px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 32px 28px;
+  text-align: center;
+}
+.login-logo { font-size: 36px; }
+.login-card h1 { font-size: 20px; margin-top: 8px; }
+.login-sub { color: var(--text-muted); font-size: 13px; margin: 4px 0 20px; }
+.login-error { color: var(--delta-down); font-size: 13px; }
+.login-card label {
+  display: block;
+  text-align: left;
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+.login-card input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--baseline);
+  border-radius: 8px;
+  background: var(--page);
+  color: var(--text-primary);
+  margin-bottom: 14px;
+}
+.login-card button {
+  width: 100%;
+  padding: 10px;
+  border: none;
+  border-radius: 8px;
+  background: var(--series-1);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+.login-card button:hover { filter: brightness(1.08); }
+
+@media (max-width: 640px) {
+  .layout { padding: 16px 14px 40px; }
+  .topbar { padding: 12px 14px; }
+}

@@ -1,0 +1,20 @@
+# systemd unit for the Stocks Dashboard gunicorn app.
+# Install to /etc/systemd/system/stocksdashboard.service
+
+[Unit]
+Description=Stocks Dashboard (gunicorn)
+After=network.target
+
+[Service]
+WorkingDirectory=/var/www/stocksDashboard
+ExecStart=/var/www/stocksDashboard/venv/bin/gunicorn \
+    --workers 1 \
+    --threads 4 \
+    --bind 127.0.0.1:8600 \
+    --timeout 60 \
+    app:app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stocks Dashboard</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-title">
+      <span class="topbar-logo">📈</span>
+      <h1>Stocks Dashboard</h1>
+    </div>
+    <div class="topbar-meta">
+      <span id="updated" class="updated" aria-live="polite"></span>
+      <button id="refresh" class="btn-ghost" type="button">Refresh</button>
+      <a class="btn-ghost" href="{{ url_for('logout') }}">Log out</a>
+    </div>
+  </header>
+
+  <main id="main" class="layout" data-loading="true">
+    <p id="load-error" class="load-error" role="alert" hidden></p>
+
+    <!-- KPI row -->
+    <section class="kpi-row" aria-label="Portfolio summary">
+      <article class="tile">
+        <h2 class="tile-label">Total value</h2>
+        <p class="tile-value hero" id="kpi-total">—</p>
+        <p class="tile-delta" id="kpi-total-delta"></p>
+      </article>
+      <article class="tile">
+        <h2 class="tile-label">Day P/L</h2>
+        <p class="tile-value" id="kpi-day">—</p>
+        <p class="tile-delta" id="kpi-day-delta"></p>
+      </article>
+      <article class="tile">
+        <h2 class="tile-label">Unrealized P/L</h2>
+        <p class="tile-value" id="kpi-unreal">—</p>
+        <p class="tile-delta" id="kpi-unreal-delta"></p>
+      </article>
+      <article class="tile">
+        <h2 class="tile-label">Top mover today</h2>
+        <p class="tile-value" id="kpi-mover">—</p>
+        <p class="tile-delta" id="kpi-mover-delta"></p>
+      </article>
+    </section>
+
+    <!-- Charts -->
+    <section class="chart-grid">
+      <article class="card">
+        <h2 class="card-title">Allocation by market value</h2>
+        <div id="chart-allocation" class="chart"></div>
+      </article>
+      <article class="card">
+        <h2 class="card-title">Today's change by holding</h2>
+        <div id="chart-daychange" class="chart"></div>
+      </article>
+    </section>
+
+    <!-- Holdings table -->
+    <section class="card">
+      <h2 class="card-title">Holdings <span id="holdings-asof" class="card-sub"></span></h2>
+      <div class="table-wrap">
+        <table id="holdings" class="holdings">
+          <thead>
+            <tr>
+              <th scope="col">Symbol</th>
+              <th scope="col" class="num">Qty</th>
+              <th scope="col" class="num">Avg cost</th>
+              <th scope="col" class="num">Price</th>
+              <th scope="col" class="num">Day</th>
+              <th scope="col" class="num">Value</th>
+              <th scope="col" class="num">P/L</th>
+              <th scope="col" class="num">P/L %</th>
+              <th scope="col">5d</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+          <tfoot></tfoot>
+        </table>
+      </div>
+    </section>
+
+    <!-- News -->
+    <section class="news-grid">
+      <article class="card">
+        <h2 class="card-title">News on your holdings</h2>
+        <ul id="news-portfolio" class="news-list"></ul>
+      </article>
+      <article class="card">
+        <h2 class="card-title">Market headlines</h2>
+        <ul id="news-market" class="news-list"></ul>
+      </article>
+    </section>
+  </main>
+
+  <div id="tooltip" class="tooltip" hidden></div>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
