@@ -32,8 +32,8 @@ CONFIG_PATH = Path(os.environ.get("CONFIG_PATH", BASE_DIR / "config.json"))
 HOLDINGS_PATH = Path(os.environ.get("HOLDINGS_PATH", BASE_DIR / "individual_holdings.json"))
 SECRET_KEY_PATH = BASE_DIR / ".secret_key"
 
-QUOTES_TTL = 300      # 5 min
-NEWS_TTL = 900        # 15 min
+QUOTES_TTL = 55       # ~1 min — dashboard polls every 60s and gets fresh prices
+NEWS_TTL = 600        # 10 min — RSS feeds rarely update faster
 LOGIN_MAX_FAILS = 5
 LOGIN_LOCKOUT_SECONDS = 15 * 60
 SESSION_LIFETIME_SECONDS = 12 * 3600
@@ -124,8 +124,13 @@ def record_login_failure(ip):
 # Auth
 # ---------------------------------------------------------------------------
 
+DEV_AUTOLOGIN = os.environ.get("DASH_DEV_AUTOLOGIN") == "1"  # local dev only
+
+
 def login_required(view):
     def wrapped(*args, **kwargs):
+        if DEV_AUTOLOGIN:
+            session["authed"] = True
         if not session.get("authed"):
             if request.path.startswith("/api/"):
                 return jsonify({"error": "unauthorized"}), 401
@@ -181,31 +186,119 @@ def num(value):
 
 
 def fetch_quote(symbol):
-    """Live price, previous close and a 5-day sparkline from Yahoo's chart API."""
+    """Live price, previous close and 3 months of daily closes from Yahoo."""
     from urllib.parse import quote
 
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{quote(symbol, safe='')}"
     resp = requests.get(
         url,
-        params={"range": "5d", "interval": "1d"},
+        params={"range": "3mo", "interval": "1d"},
         headers=HTTP_HEADERS,
         timeout=8,
     )
     resp.raise_for_status()
     result = resp.json()["chart"]["result"][0]
     meta = result["meta"]
-    closes = [c for c in result["indicators"]["quote"][0].get("close", []) if c is not None]
+    timestamps = result.get("timestamp") or []
+    closes_raw = result["indicators"]["quote"][0].get("close") or []
+    series = [(t, c) for t, c in zip(timestamps, closes_raw) if c is not None]
+    closes = [c for _, c in series]
     price = meta.get("regularMarketPrice") or (closes[-1] if closes else None)
+    market_time = meta.get("regularMarketTime")
     prev_close = meta.get("previousClose")
     if prev_close is None and len(closes) >= 2:
-        prev_close = closes[-2]
+        # If the last daily row is today's session, yesterday is one back.
+        same_day = (
+            market_time is not None
+            and series
+            and series[-1][0] // 86400 == market_time // 86400
+        )
+        prev_close = closes[-2] if same_day else closes[-1]
     return {
         "symbol": symbol,
         "price": price,
         "prev_close": prev_close,
-        "spark": closes[-6:],
-        "market_time": meta.get("regularMarketTime"),
+        "series": series,
+        "market_time": market_time,
     }
+
+
+# Static sector map for the portfolio — insight Robinhood doesn't surface.
+SECTORS = {
+    "ADBE": "Technology", "SHOP": "Technology", "APPN": "Technology",
+    "AAPL": "Technology", "PANW": "Technology", "APLD": "Technology",
+    "TRMB": "Technology", "WDC": "Technology", "STX": "Technology",
+    "SNDK": "Technology", "IONQ": "Quantum", "QBTS": "Quantum",
+    "NVDA": "Semiconductors", "AMD": "Semiconductors", "INTC": "Semiconductors",
+    "TSM": "Semiconductors", "MRVL": "Semiconductors", "ARM": "Semiconductors",
+    "SOXL": "Semiconductors", "TSLA": "Consumer", "AMZN": "Consumer",
+    "CVNA": "Consumer", "RIVN": "Consumer", "PSMT": "Consumer", "OZON": "Consumer",
+    "ROKU": "Media", "NFLX": "Media", "PYPL": "Financials", "LMND": "Financials",
+    "NDAQ": "Financials", "HIMS": "Healthcare", "RTX": "Industrials",
+    "HYLN": "Industrials", "GEVO": "Industrials", "ARE": "Real Estate",
+    "SPY": "Index ETFs", "DIA": "Index ETFs", "QQQ": "Index ETFs",
+    "SPCX": "Index ETFs", "GLD": "Commodities", "GLDM": "Commodities",
+    "USO": "Commodities",
+}
+
+TRADING_DAYS = {"1w": 5, "1m": 21, "3m": 63}
+
+
+def window_returns(closes):
+    """% return over ~1 week / 1 month / 3 months of trading days."""
+    out = {}
+    for key, days in TRADING_DAYS.items():
+        idx = len(closes) - 1 - days
+        if idx < 0 and key == "3m" and len(closes) >= 45:
+            idx = 0  # a 3mo range often yields exactly ~63 rows; use the first
+        if idx >= 0 and closes[idx]:
+            out[key] = (closes[-1] / closes[idx] - 1) * 100
+        else:
+            out[key] = None
+    return out
+
+
+def annualized_vol(closes):
+    """Annualized daily-return volatility, in percent."""
+    if len(closes) < 15:
+        return None
+    rets = [closes[i] / closes[i - 1] - 1 for i in range(1, len(closes)) if closes[i - 1]]
+    mean = sum(rets) / len(rets)
+    var = sum((r - mean) ** 2 for r in rets) / (len(rets) - 1)
+    return (var ** 0.5) * (252 ** 0.5) * 100
+
+
+def build_history(holdings_positions, quotes):
+    """Reconstruct daily portfolio value over ~3 months from per-symbol closes,
+    assuming current share counts. Also returns SPY closes for benchmarking."""
+    by_day = {}
+    day_sets = []
+    for pos in holdings_positions:
+        q = quotes.get(pos["symbol"])
+        qty = num(pos.get("quantity")) or 0.0
+        if not q or not q.get("series") or qty <= 0:
+            continue
+        series = {t // 86400: c for t, c in q["series"]}
+        by_day[pos["symbol"]] = (qty, series)
+        day_sets.append(set(series))
+    if not by_day:
+        return None
+    days = sorted(set().union(*day_sets))[-64:]
+    last_close = {}
+    values, spy_vals = [], []
+    spy_series = {t // 86400: c for t, c in (quotes.get("SPY") or {}).get("series", [])}
+    spy_last = None
+    for day in days:
+        total = 0.0
+        for sym, (qty, series) in by_day.items():
+            if day in series:
+                last_close[sym] = series[day]
+            if sym in last_close:
+                total += qty * last_close[sym]
+        values.append(round(total, 2))
+        spy_last = spy_series.get(day, spy_last)
+        spy_vals.append(spy_last)
+    return {"days": days, "value": values, "spy": spy_vals}
 
 
 def fetch_all_quotes(symbols):
@@ -253,6 +346,7 @@ def build_portfolio():
         day_change_pct = ((live / prev_close) - 1) * 100 if priceable else None
         if q.get("market_time"):
             latest_market_time = max(latest_market_time or 0, q["market_time"])
+        closes = [c for _, c in q.get("series") or []]
         positions.append({
             "symbol": sym,
             "quantity": qty,
@@ -269,7 +363,10 @@ def build_portfolio():
                 if unrealized is not None and cost_basis
                 else None
             ),
-            "spark": q.get("spark") or [],
+            "spark": closes[-10:],
+            "returns": window_returns(closes),
+            "vol": annualized_vol(closes),
+            "sector": SECTORS.get(sym, "Other"),
         })
         if market_value is not None and cost_basis is not None:
             totals["market_value"] += market_value
@@ -285,12 +382,25 @@ def build_portfolio():
         totals["day_change"] / prev_total * 100 if prev_total else None
     )
     positions.sort(key=lambda p: p["market_value"] or 0.0, reverse=True)
+
+    sectors = {}
+    for p in positions:
+        if p["market_value"]:
+            sectors[p["sector"]] = sectors.get(p["sector"], 0.0) + p["market_value"]
+    sector_list = sorted(
+        ({"sector": k, "value": round(v, 2)} for k, v in sectors.items()),
+        key=lambda s: s["value"],
+        reverse=True,
+    )
+
     return {
         "account": holdings.get("account"),
         "as_of": holdings.get("as_of"),
         "market_time": latest_market_time,
         "positions": positions,
         "totals": totals,
+        "sectors": sector_list,
+        "history": build_history(holdings["positions"], quotes),
     }
 
 

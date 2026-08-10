@@ -4,17 +4,23 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Stocks Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
   <header class="topbar">
-    <div class="topbar-title">
-      <span class="topbar-logo">📈</span>
-      <h1>Stocks Dashboard</h1>
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <div>
+        <h1>Stocks<span class="brand-accent">Dashboard</span></h1>
+        <p class="brand-sub">portfolio intelligence</p>
+      </div>
     </div>
     <div class="topbar-meta">
-      <span id="updated" class="updated" aria-live="polite"></span>
-      <button id="refresh" class="btn-ghost" type="button">Refresh</button>
+      <span class="live-pill"><span class="live-dot" aria-hidden="true"></span><span id="live-status">connecting…</span></span>
+      <button id="refresh" class="btn-ghost" type="button">Refresh now</button>
       <a class="btn-ghost" href="{{ url_for('logout') }}">Log out</a>
     </div>
   </header>
@@ -22,45 +28,91 @@
   <main id="main" class="layout" data-loading="true">
     <p id="load-error" class="load-error" role="alert" hidden></p>
 
-    <!-- KPI row -->
-    <section class="kpi-row" aria-label="Portfolio summary">
-      <article class="tile">
-        <h2 class="tile-label">Total value</h2>
-        <p class="tile-value hero" id="kpi-total">—</p>
-        <p class="tile-delta" id="kpi-total-delta"></p>
+    <!-- Hero: portfolio state at a glance -->
+    <section class="hero-card" aria-label="Portfolio summary">
+      <div class="hero-main">
+        <p class="micro-label">Total portfolio value</p>
+        <p class="hero-number" id="kpi-total">—</p>
+        <p class="hero-delta" id="kpi-total-delta"></p>
+      </div>
+      <div class="hero-stats">
+        <div class="hstat">
+          <p class="micro-label">Day P/L</p>
+          <p class="hstat-value" id="kpi-day">—</p>
+        </div>
+        <div class="hstat">
+          <p class="micro-label">vs S&amp;P 500 today</p>
+          <p class="hstat-value" id="kpi-vs-spy">—</p>
+        </div>
+        <div class="hstat">
+          <p class="micro-label">Unrealized P/L</p>
+          <p class="hstat-value" id="kpi-unreal">—</p>
+        </div>
+        <div class="hstat">
+          <p class="micro-label">Winners / losers today</p>
+          <p class="hstat-value" id="kpi-breadth">—</p>
+        </div>
+        <div class="hstat">
+          <p class="micro-label">Top-5 concentration</p>
+          <p class="hstat-value" id="kpi-conc">—</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- News first: why things are moving + market context -->
+    <section class="grid-2" aria-label="News">
+      <article class="card">
+        <header class="card-head">
+          <h2 class="card-title">Why it's moving</h2>
+          <span class="card-sub">today's biggest movers, with their latest headlines</span>
+        </header>
+        <ol id="movers" class="movers"></ol>
       </article>
-      <article class="tile">
-        <h2 class="tile-label">Day P/L</h2>
-        <p class="tile-value" id="kpi-day">—</p>
-        <p class="tile-delta" id="kpi-day-delta"></p>
-      </article>
-      <article class="tile">
-        <h2 class="tile-label">Unrealized P/L</h2>
-        <p class="tile-value" id="kpi-unreal">—</p>
-        <p class="tile-delta" id="kpi-unreal-delta"></p>
-      </article>
-      <article class="tile">
-        <h2 class="tile-label">Top mover today</h2>
-        <p class="tile-value" id="kpi-mover">—</p>
-        <p class="tile-delta" id="kpi-mover-delta"></p>
+      <article class="card">
+        <header class="card-head">
+          <h2 class="card-title">Market headlines</h2>
+          <span class="card-sub" id="news-updated"></span>
+        </header>
+        <ul id="news-market" class="news-list"></ul>
       </article>
     </section>
 
-    <!-- Charts -->
-    <section class="chart-grid">
+    <!-- Performance vs benchmark -->
+    <section class="card" aria-label="Performance vs S&P 500">
+      <header class="card-head">
+        <h2 class="card-title">Performance — you vs S&amp;P 500</h2>
+        <span class="card-sub">3 months, indexed to 100 · assumes current share counts</span>
+      </header>
+      <div class="perf-wrap">
+        <div id="chart-perf" class="chart"></div>
+        <div class="perf-side" id="perf-side"></div>
+      </div>
+    </section>
+
+    <!-- Exposure -->
+    <section class="grid-2" aria-label="Exposure">
       <article class="card">
-        <h2 class="card-title">Allocation by market value</h2>
+        <header class="card-head">
+          <h2 class="card-title">Sector exposure</h2>
+          <span class="card-sub">share of portfolio value</span>
+        </header>
+        <div id="chart-sectors" class="chart"></div>
+      </article>
+      <article class="card">
+        <header class="card-head">
+          <h2 class="card-title">Allocation</h2>
+          <span class="card-sub">by market value</span>
+        </header>
         <div id="chart-allocation" class="chart"></div>
       </article>
-      <article class="card">
-        <h2 class="card-title">Today's change by holding</h2>
-        <div id="chart-daychange" class="chart"></div>
-      </article>
     </section>
 
-    <!-- Holdings table -->
-    <section class="card">
-      <h2 class="card-title">Holdings <span id="holdings-asof" class="card-sub"></span></h2>
+    <!-- Holdings detail -->
+    <section class="card" aria-label="Holdings">
+      <header class="card-head">
+        <h2 class="card-title">Holdings</h2>
+        <span class="card-sub" id="holdings-asof"></span>
+      </header>
       <div class="table-wrap">
         <table id="holdings" class="holdings">
           <thead>
@@ -70,10 +122,14 @@
               <th scope="col" class="num">Avg cost</th>
               <th scope="col" class="num">Price</th>
               <th scope="col" class="num">Day</th>
+              <th scope="col" class="num">1W</th>
+              <th scope="col" class="num">1M</th>
+              <th scope="col" class="num">3M</th>
+              <th scope="col" class="num">Vol</th>
               <th scope="col" class="num">Value</th>
               <th scope="col" class="num">P/L</th>
               <th scope="col" class="num">P/L %</th>
-              <th scope="col">5d</th>
+              <th scope="col">10d</th>
             </tr>
           </thead>
           <tbody></tbody>
@@ -82,16 +138,12 @@
       </div>
     </section>
 
-    <!-- News -->
-    <section class="news-grid">
-      <article class="card">
-        <h2 class="card-title">News on your holdings</h2>
-        <ul id="news-portfolio" class="news-list"></ul>
-      </article>
-      <article class="card">
-        <h2 class="card-title">Market headlines</h2>
-        <ul id="news-market" class="news-list"></ul>
-      </article>
+    <!-- Remaining holdings news -->
+    <section class="card" aria-label="More holdings news">
+      <header class="card-head">
+        <h2 class="card-title">More news on your holdings</h2>
+      </header>
+      <ul id="news-portfolio" class="news-list news-cols"></ul>
     </section>
   </main>
 

@@ -1,4 +1,6 @@
-/* Stocks Dashboard client: fetch /api/dashboard, render KPIs, charts, table, news. */
+/* Stocks Dashboard client — polls /api/dashboard every 60s and renders:
+   hero KPIs, movers-with-news, market headlines, performance vs SPY,
+   sector exposure, allocation, holdings table, holdings news. */
 
 (function () {
   "use strict";
@@ -6,26 +8,24 @@
   const $ = (id) => document.getElementById(id);
   const main = $("main");
   const tooltip = $("tooltip");
-  const REFRESH_MS = 5 * 60 * 1000;
+  const REFRESH_MS = 60 * 1000;
+  const SVGNS = "http://www.w3.org/2000/svg";
 
   const fmtUSD = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
   const fmtUSD0 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
   const fmtQty = new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 });
 
-  function money(value, formatter) {
-    return value === null || value === undefined ? "—" : (formatter || fmtUSD).format(value);
+  function money(v, f) { return v === null || v === undefined ? "—" : (f || fmtUSD).format(v); }
+  function signed(v, f) {
+    if (v === null || v === undefined) return "—";
+    return (v >= 0 ? "+" : "−") + (f || fmtUSD).format(Math.abs(v));
   }
-  function signed(value, formatter) {
-    if (value === null || value === undefined) return "—";
-    const f = formatter || fmtUSD;
-    return (value >= 0 ? "+" : "−") + f.format(Math.abs(value));
+  function signedPct(v, digits) {
+    if (v === null || v === undefined) return "—";
+    return (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(digits === undefined ? 2 : digits) + "%";
   }
-  function signedPct(value, digits) {
-    if (value === null || value === undefined) return "";
-    return (value >= 0 ? "+" : "−") + Math.abs(value).toFixed(digits === undefined ? 2 : digits) + "%";
-  }
-  function updown(value) { return value >= 0 ? "up" : "down"; }
-  function arrow(value) { return value >= 0 ? "▲" : "▼"; }
+  function updown(v) { return v > 0 ? "up" : v < 0 ? "down" : "flat"; }
+  function arrow(v) { return v >= 0 ? "▲" : "▼"; }
   function esc(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -33,12 +33,16 @@
   }
   function timeAgo(epoch) {
     if (!epoch) return "";
-    const mins = Math.round((Date.now() / 1000 - epoch) / 60);
+    const mins = Math.round(Date.now() / 1000 / 60 - epoch / 60);
     if (mins < 1) return "just now";
     if (mins < 60) return mins + "m ago";
     const hrs = Math.round(mins / 60);
     if (hrs < 24) return hrs + "h ago";
     return Math.round(hrs / 24) + "d ago";
+  }
+  function dayLabel(epochDay) {
+    return new Date(epochDay * 86400 * 1000)
+      .toLocaleDateString("en-US", { month: "short", day: "numeric" });
   }
 
   // ---- tooltip -------------------------------------------------------------
@@ -47,8 +51,7 @@
     tooltip.innerHTML = html;
     tooltip.hidden = false;
     const pad = 14;
-    let x = evt.clientX + pad;
-    let y = evt.clientY + pad;
+    let x = evt.clientX + pad, y = evt.clientY + pad;
     const r = tooltip.getBoundingClientRect();
     if (x + r.width > window.innerWidth - 8) x = evt.clientX - r.width - pad;
     if (y + r.height > window.innerHeight - 8) y = evt.clientY - r.height - pad;
@@ -56,180 +59,315 @@
     tooltip.style.top = y + "px";
   }
   function hideTooltip() { tooltip.hidden = true; }
-
   function attachTip(el, htmlFn) {
     el.addEventListener("mousemove", (e) => showTooltip(e, htmlFn()));
     el.addEventListener("mouseleave", hideTooltip);
   }
 
-  // ---- KPI tiles -----------------------------------------------------------
-
-  function renderKpis(portfolio) {
-    const t = portfolio.totals;
-    $("kpi-total").textContent = fmtUSD.format(t.market_value);
-    const td = $("kpi-total-delta");
-    td.innerHTML = `<span class="${updown(t.day_change)}">${arrow(t.day_change)} ${signed(t.day_change)} (${signedPct(t.day_change_pct)})</span> today`;
-
-    $("kpi-day").textContent = signed(t.day_change);
-    $("kpi-day").className = "tile-value " + updown(t.day_change);
-    $("kpi-day-delta").innerHTML = `<span class="${updown(t.day_change)}">${signedPct(t.day_change_pct)}</span> vs yesterday`;
-
-    $("kpi-unreal").textContent = signed(t.unrealized_pl);
-    $("kpi-unreal").className = "tile-value " + updown(t.unrealized_pl);
-    $("kpi-unreal-delta").innerHTML = `<span class="${updown(t.unrealized_pl)}">${signedPct(t.unrealized_pl_pct)}</span> on ${fmtUSD0.format(t.cost_basis)} cost`;
-
-    const movers = portfolio.positions.filter((p) => p.day_change_pct !== null);
-    if (movers.length) {
-      const top = movers.reduce((a, b) =>
-        Math.abs(b.day_change_pct) > Math.abs(a.day_change_pct) ? b : a);
-      $("kpi-mover").textContent = top.symbol;
-      $("kpi-mover-delta").innerHTML =
-        `<span class="${updown(top.day_change_pct)}">${arrow(top.day_change_pct)} ${signedPct(top.day_change_pct)}</span> (${signed(top.day_change)})`;
-    }
-  }
-
-  // ---- charts (inline SVG) -------------------------------------------------
-
-  const CHART = { labelW: 52, valueW: 74, barH: 18, rowH: 27, pad: 6 };
-
   function svgEl(tag, attrs) {
-    const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    const el = document.createElementNS(SVGNS, tag);
     for (const k in attrs) el.setAttribute(k, attrs[k]);
     return el;
   }
 
-  /* Horizontal bar chart, one hue (series-1), 4px rounded data-end,
-     symbol labels left, value labels outside the bar end. */
-  function renderAllocation(allPositions) {
-    const host = $("chart-allocation");
-    host.textContent = "";
-    const valued = allPositions.filter((p) => p.market_value > 0);
-    const total = valued.reduce((s, p) => s + p.market_value, 0);
-    const TOP = 12;
-    let positions = valued.slice(0, TOP);
-    const tail = valued.slice(TOP);
-    if (tail.length) {
-      positions = positions.concat([{
-        symbol: "Other",
-        market_value: tail.reduce((s, p) => s + p.market_value, 0),
-        quantity: null,
-        price: null,
-        other_count: tail.length,
-      }]);
-    }
-    const W = 560;
-    const H = positions.length * CHART.rowH + CHART.pad * 2;
-    const plotW = W - CHART.labelW - CHART.valueW;
-    const max = Math.max(...positions.map((p) => p.market_value));
-    const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img",
-      "aria-label": "Allocation by market value, largest first" });
+  // ---- hero KPIs -----------------------------------------------------------
 
-    positions.forEach((p, i) => {
-      const y = CHART.pad + i * CHART.rowH;
-      const w = Math.max(2, (p.market_value / max) * plotW);
-      const g = svgEl("g", {});
-      const label = svgEl("text", { x: CHART.labelW - 8, y: y + CHART.barH - 4, "text-anchor": "end", class: "bar-label" });
-      label.textContent = p.symbol;
-      const bar = svgEl("path", { fill: "var(--series-1)",
-        d: roundedRightRect(CHART.labelW, y, w, CHART.barH, 4) });
-      const value = svgEl("text", { x: CHART.labelW + w + 6, y: y + CHART.barH - 4, class: "bar-value" });
-      value.textContent = fmtUSD0.format(p.market_value);
-      // invisible full-row hit target so hover is easy
-      const hit = svgEl("rect", { x: 0, y: y - 2, width: W, height: CHART.rowH, fill: "transparent" });
-      attachTip(hit, () =>
-        `<div class="tt-title">${esc(p.symbol)}</div>` +
-        `<div class="tt-row">${fmtUSD.format(p.market_value)} · ${(p.market_value / total * 100).toFixed(1)}% of portfolio</div>` +
-        (p.other_count
-          ? `<div class="tt-row">${p.other_count} smaller positions — see table</div>`
-          : `<div class="tt-row">${fmtQty.format(p.quantity)} sh @ ${money(p.price)}</div>`));
-      g.append(label, bar, value, hit);
-      svg.append(g);
-    });
-    svg.append(svgEl("line", { x1: CHART.labelW, y1: CHART.pad - 2, x2: CHART.labelW, y2: H - CHART.pad + 2, class: "axis-line" }));
-    host.append(svg);
+  function renderKpis(portfolio) {
+    const t = portfolio.totals;
+    const pos = portfolio.positions;
+    $("kpi-total").textContent = fmtUSD.format(t.market_value);
+    $("kpi-total-delta").innerHTML =
+      `<span class="${updown(t.day_change)}">${arrow(t.day_change)} ${signed(t.day_change)} (${signedPct(t.day_change_pct)})</span> today · ` +
+      `<span class="${updown(t.unrealized_pl)}">${signedPct(t.unrealized_pl_pct, 1)}</span> all-time`;
+
+    setStat("kpi-day", signed(t.day_change), updown(t.day_change));
+
+    const spy = pos.find((p) => p.symbol === "SPY");
+    if (spy && spy.day_change_pct !== null && t.day_change_pct !== null) {
+      const diff = t.day_change_pct - spy.day_change_pct;
+      setStat("kpi-vs-spy", signedPct(diff) + " pts", updown(diff));
+    } else {
+      setStat("kpi-vs-spy", "—", "flat");
+    }
+
+    setStat("kpi-unreal", signed(t.unrealized_pl), updown(t.unrealized_pl));
+
+    const movers = pos.filter((p) => p.day_change_pct !== null);
+    const ups = movers.filter((p) => p.day_change_pct > 0).length;
+    const downs = movers.filter((p) => p.day_change_pct < 0).length;
+    $("kpi-breadth").innerHTML =
+      `<span class="up">${ups}</span> <span class="flat">/</span> <span class="down">${downs}</span>`;
+
+    const valued = pos.filter((p) => p.market_value > 0);
+    const top5 = valued.slice(0, 5).reduce((s, p) => s + p.market_value, 0);
+    setStat("kpi-conc", (top5 / t.market_value * 100).toFixed(0) + "%",
+      top5 / t.market_value > 0.6 ? "down" : "flat");
   }
 
-  /* Diverging bar chart around a zero baseline: gains right (status good),
-     losses left (status critical). Value labels at the bar ends. */
-  function renderDayChange(positions) {
-    const host = $("chart-daychange");
-    host.textContent = "";
-    let rows = positions.filter((p) => p.day_change_pct !== null)
-      .slice().sort((a, b) => b.day_change_pct - a.day_change_pct);
-    if (!rows.length) { host.textContent = "No live quotes right now."; return; }
-    let note = "";
-    if (rows.length > 16) {
-      const shown = rows.slice(0, 8).concat(rows.slice(-8));
-      note = `Biggest movers — ${rows.length - shown.length} quieter holdings in the table below.`;
-      rows = shown;
-    }
-    const W = 560;
-    const H = rows.length * CHART.rowH + CHART.pad * 2;
-    const valueW = 64;
-    const plotW = (W - CHART.labelW - valueW * 2);
-    const cx = CHART.labelW + valueW + plotW / 2;
-    const max = Math.max(...rows.map((p) => Math.abs(p.day_change_pct)), 0.01);
-    const scale = (plotW / 2 - 8) / max;
-    const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img",
-      "aria-label": "Today's percent change per holding, gains and losses around zero" });
+  function setStat(id, text, cls) {
+    const el = $(id);
+    el.textContent = text;
+    el.className = "hstat-value " + (cls || "");
+  }
 
-    rows.forEach((p, i) => {
-      const y = CHART.pad + i * CHART.rowH;
-      const w = Math.max(2, Math.abs(p.day_change_pct) * scale);
+  // ---- movers with their headlines ("why it's moving") ---------------------
+
+  function renderMovers(positions, portfolioNews) {
+    const host = $("movers");
+    const movers = positions
+      .filter((p) => p.day_change_pct !== null && p.market_value > 0)
+      .sort((a, b) => Math.abs(b.day_change_pct) - Math.abs(a.day_change_pct))
+      .slice(0, 8);
+    const maxAbs = Math.max(...movers.map((p) => Math.abs(p.day_change_pct)), 0.01);
+
+    host.innerHTML = movers.map((p) => {
       const gain = p.day_change_pct >= 0;
-      const g = svgEl("g", {});
-      const label = svgEl("text", { x: CHART.labelW - 8, y: y + CHART.barH - 4, "text-anchor": "end", class: "bar-label" });
-      label.textContent = p.symbol;
-      const bar = svgEl("path", {
-        fill: gain ? "var(--bar-up)" : "var(--bar-down)",
-        d: gain ? roundedRightRect(cx, y, w, CHART.barH, 4)
-                : roundedLeftRect(cx - w, y, w, CHART.barH, 4),
-      });
-      const value = svgEl("text", {
-        x: gain ? cx + w + 6 : cx - w - 6,
-        y: y + CHART.barH - 4,
-        "text-anchor": gain ? "start" : "end",
-        class: "bar-value",
-      });
-      value.textContent = signedPct(p.day_change_pct);
-      const hit = svgEl("rect", { x: 0, y: y - 2, width: W, height: CHART.rowH, fill: "transparent" });
-      attachTip(hit, () =>
-        `<div class="tt-title">${esc(p.symbol)} ${arrow(p.day_change_pct)} ${signedPct(p.day_change_pct)}</div>` +
-        `<div class="tt-row">${signed(p.day_change)} today · now ${fmtUSD.format(p.price)}</div>`);
-      g.append(label, bar, value, hit);
-      svg.append(g);
-    });
-    svg.append(svgEl("line", { x1: cx, y1: CHART.pad - 2, x2: cx, y2: H - CHART.pad + 2, class: "axis-line" }));
-    host.append(svg);
-    if (note) {
-      const p = document.createElement("p");
-      p.className = "chart-note";
-      p.textContent = note;
-      host.append(p);
-    }
+      const w = Math.max(2, Math.abs(p.day_change_pct) / maxAbs * 50);
+      const items = portfolioNews.filter((n) => n.ticker === p.symbol).slice(0, 2);
+      const newsHtml = items.length
+        ? `<ul class="mover-news">` + items.map((n) =>
+            `<li><a href="${esc(n.link)}" target="_blank" rel="noopener noreferrer">${esc(n.title)}</a>` +
+            `<span class="src">${esc(n.source)}${n.published ? " · " + timeAgo(n.published) : ""}</span></li>`
+          ).join("") + `</ul>`
+        : `<p class="mover-news mover-nonews">No fresh headlines — likely moving with its sector or the broader market.</p>`;
+      return `<li>
+        <div class="mover-row">
+          <span class="mover-sym">${esc(p.symbol)}</span>
+          <span class="mover-bar-track" aria-hidden="true">
+            <span class="mover-bar" style="left:${gain ? 50 : 50 - w}%;width:${w}%;background:var(--${gain ? "up" : "down"})"></span>
+          </span>
+          <span class="mover-pct ${updown(p.day_change_pct)}">${arrow(p.day_change_pct)} ${signedPct(p.day_change_pct)}</span>
+        </div>
+        ${newsHtml}
+      </li>`;
+    }).join("");
   }
+
+  // ---- news lists ----------------------------------------------------------
+
+  function renderNews(listEl, items, showTicker, max) {
+    listEl.innerHTML = items.slice(0, max || 40).map((n) => `
+      <li>
+        ${showTicker && n.ticker ? `<span class="news-ticker">${esc(n.ticker)}</span>` : ""}
+        <div>
+          <a class="news-title" href="${esc(n.link)}" target="_blank" rel="noopener noreferrer">${esc(n.title)}</a>
+          <span class="news-meta">${esc(n.source)}${n.published ? " · " + timeAgo(n.published) : ""}</span>
+        </div>
+      </li>`).join("") || "<li>No headlines right now.</li>";
+  }
+
+  // ---- performance vs SPY (3mo line chart, indexed) ------------------------
+
+  function renderPerf(history) {
+    const host = $("chart-perf");
+    host.textContent = "";
+    if (!history || !history.value || history.value.length < 2) {
+      host.textContent = "Not enough history yet.";
+      return;
+    }
+    const days = history.days;
+    const port = history.value.map((v) => v / history.value[0] * 100);
+    const hasSpy = history.spy && history.spy[0];
+    const spy = hasSpy ? history.spy.map((v) => (v ? v / history.spy[0] * 100 : null)) : null;
+
+    const W = 640, H = 240, L = 40, R = 78, T = 12, B = 26;
+    const all = port.concat(spy ? spy.filter((v) => v !== null) : []);
+    const lo = Math.min(...all), hi = Math.max(...all);
+    const pad = (hi - lo) * 0.08 || 1;
+    const y = (v) => T + (hi + pad - v) / (hi - lo + 2 * pad) * (H - T - B);
+    const x = (i) => L + i / (days.length - 1) * (W - L - R);
+
+    const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img",
+      "aria-label": "Portfolio vs S&P 500 over 3 months, indexed to 100" });
+
+    // horizontal hairlines + tick labels
+    for (let g = 0; g < 4; g++) {
+      const v = lo + (hi - lo) * g / 3;
+      svg.append(svgEl("line", { x1: L, y1: y(v), x2: W - R, y2: y(v), class: "grid-line" }));
+      const t = svgEl("text", { x: L - 6, y: y(v) + 3, "text-anchor": "end", class: "axis-tick" });
+      t.textContent = v.toFixed(0);
+      svg.append(t);
+    }
+    // x tick labels: first, middle, last
+    [0, Math.floor(days.length / 2), days.length - 1].forEach((i) => {
+      const t = svgEl("text", { x: x(i), y: H - 8, "text-anchor": i === 0 ? "start" : i === days.length - 1 ? "end" : "middle", class: "axis-tick" });
+      t.textContent = dayLabel(days[i]);
+      svg.append(t);
+    });
+
+    function linePath(vals) {
+      let d = "";
+      vals.forEach((v, i) => {
+        if (v === null) return;
+        d += (d ? " L" : "M") + x(i).toFixed(1) + "," + y(v).toFixed(1);
+      });
+      return d;
+    }
+
+    if (spy) {
+      svg.append(svgEl("path", { d: linePath(spy), fill: "none",
+        stroke: "var(--neutral-ln)", "stroke-width": 2 }));
+    }
+    svg.append(svgEl("path", { d: linePath(port), fill: "none",
+      stroke: "var(--accent)", "stroke-width": 2.4 }));
+
+    // direct labels at line ends
+    const lastP = port[port.length - 1];
+    const labP = svgEl("text", { x: W - R + 8, y: y(lastP) + 4, class: "bar-label", fill: "var(--accent)" });
+    labP.textContent = `You ${signedPct(lastP - 100, 1)}`;
+    labP.style.fill = "var(--accent)";
+    svg.append(labP);
+    if (spy) {
+      const lastS = spy[spy.length - 1];
+      let ys = y(lastS) + 4;
+      if (Math.abs(ys - (y(lastP) + 4)) < 14) ys = y(lastP) + 4 + (ys >= y(lastP) + 4 ? 14 : -14);
+      const labS = svgEl("text", { x: W - R + 8, y: ys, class: "bar-label" });
+      labS.textContent = `SPY ${signedPct(lastS - 100, 1)}`;
+      svg.append(labS);
+    }
+
+    // crosshair + hover
+    const cross = svgEl("line", { y1: T, y2: H - B, class: "axis-line", opacity: 0 });
+    const dotP = svgEl("circle", { r: 3.5, fill: "var(--accent)", opacity: 0 });
+    const dotS = svgEl("circle", { r: 3.5, fill: "var(--neutral-ln)", opacity: 0 });
+    const hit = svgEl("rect", { x: L, y: 0, width: W - L - R, height: H, fill: "transparent" });
+    svg.append(cross, dotP, dotS, hit);
+
+    hit.addEventListener("mousemove", (e) => {
+      const rect = svg.getBoundingClientRect();
+      const px = (e.clientX - rect.left) / rect.width * W;
+      const i = Math.max(0, Math.min(days.length - 1,
+        Math.round((px - L) / (W - L - R) * (days.length - 1))));
+      cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i));
+      cross.setAttribute("opacity", 1);
+      dotP.setAttribute("cx", x(i)); dotP.setAttribute("cy", y(port[i])); dotP.setAttribute("opacity", 1);
+      let rows = `<div class="tt-row">Portfolio ${port[i].toFixed(1)} (${signedPct(port[i] - 100, 1)})</div>`;
+      if (spy && spy[i] !== null) {
+        dotS.setAttribute("cx", x(i)); dotS.setAttribute("cy", y(spy[i])); dotS.setAttribute("opacity", 1);
+        rows += `<div class="tt-row">S&amp;P 500 ${spy[i].toFixed(1)} (${signedPct(spy[i] - 100, 1)})</div>`;
+      }
+      showTooltip(e, `<div class="tt-title">${dayLabel(days[i])}</div>` + rows);
+    });
+    hit.addEventListener("mouseleave", () => {
+      cross.setAttribute("opacity", 0);
+      dotP.setAttribute("opacity", 0);
+      dotS.setAttribute("opacity", 0);
+      hideTooltip();
+    });
+
+    host.append(svg);
+  }
+
+  function renderPerfSide(portfolio) {
+    const host = $("perf-side");
+    const withRet = portfolio.positions.filter((p) => p.returns && p.returns["1m"] !== null && p.market_value > 0);
+    const best = withRet.slice().sort((a, b) => b.returns["1m"] - a.returns["1m"])[0];
+    const worst = withRet.slice().sort((a, b) => a.returns["1m"] - b.returns["1m"])[0];
+    const h = portfolio.history;
+    const ret3m = h && h.value.length > 1 ? (h.value[h.value.length - 1] / h.value[0] - 1) * 100 : null;
+    const spy3m = h && h.spy && h.spy[0] ? (h.spy[h.spy.length - 1] / h.spy[0] - 1) * 100 : null;
+    host.innerHTML = `
+      <div class="pstat">
+        <p class="micro-label">Your 3-month return</p>
+        <p class="pstat-value ${ret3m === null ? "" : updown(ret3m)}">${signedPct(ret3m, 1)}</p>
+        <p class="pstat-note">S&amp;P 500: ${signedPct(spy3m, 1)}</p>
+      </div>
+      ${best ? `<div class="pstat">
+        <p class="micro-label">Best this month</p>
+        <p class="pstat-value up">${esc(best.symbol)} ${signedPct(best.returns["1m"], 1)}</p>
+      </div>` : ""}
+      ${worst ? `<div class="pstat">
+        <p class="micro-label">Worst this month</p>
+        <p class="pstat-value down">${esc(worst.symbol)} ${signedPct(worst.returns["1m"], 1)}</p>
+      </div>` : ""}`;
+  }
+
+  // ---- horizontal bar charts (single hue) ----------------------------------
+
+  const BAR = { labelW: 108, valueW: 84, barH: 16, rowH: 26, pad: 6 };
 
   function roundedRightRect(x, y, w, h, r) {
     r = Math.min(r, w);
     return `M${x},${y} h${w - r} a${r},${r} 0 0 1 ${r},${r} v${h - 2 * r} a${r},${r} 0 0 1 -${r},${r} h-${w - r} Z`;
   }
-  function roundedLeftRect(x, y, w, h, r) {
-    r = Math.min(r, w);
-    return `M${x + w},${y} v${h} h-${w - r} a${r},${r} 0 0 1 -${r},-${r} v-${h - 2 * r} a${r},${r} 0 0 1 ${r},-${r} Z`;
+
+  function hBarChart(host, rows, opts) {
+    host.textContent = "";
+    const W = 560;
+    const H = rows.length * BAR.rowH + BAR.pad * 2;
+    const plotW = W - opts.labelW - BAR.valueW;
+    const max = Math.max(...rows.map((r) => r.value));
+    const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": opts.ariaLabel });
+    rows.forEach((row, i) => {
+      const y = BAR.pad + i * BAR.rowH;
+      const w = Math.max(2, row.value / max * plotW);
+      const label = svgEl("text", { x: opts.labelW - 8, y: y + BAR.barH - 3, "text-anchor": "end", class: "bar-label" });
+      label.textContent = row.label;
+      const bar = svgEl("path", { fill: "var(--accent-dim)", d: roundedRightRect(opts.labelW, y, w, BAR.barH, 4) });
+      const val = svgEl("text", { x: opts.labelW + w + 6, y: y + BAR.barH - 3, class: "bar-value" });
+      val.textContent = row.valueLabel;
+      const hit = svgEl("rect", { x: 0, y: y - 2, width: W, height: BAR.rowH, fill: "transparent" });
+      attachTip(hit, () => row.tip);
+      svg.append(label, bar, val, hit);
+    });
+    svg.append(svgEl("line", { x1: opts.labelW, y1: BAR.pad - 2, x2: opts.labelW, y2: H - BAR.pad + 2, class: "axis-line" }));
+    host.append(svg);
+  }
+
+  function renderSectors(sectors, total) {
+    hBarChart($("chart-sectors"), sectors.map((s) => ({
+      label: s.sector,
+      value: s.value,
+      valueLabel: (s.value / total * 100).toFixed(1) + "%",
+      tip: `<div class="tt-title">${esc(s.sector)}</div>` +
+           `<div class="tt-row">${fmtUSD0.format(s.value)} · ${(s.value / total * 100).toFixed(1)}% of portfolio</div>`,
+    })), { labelW: 108, ariaLabel: "Sector exposure as share of portfolio value" });
+  }
+
+  function renderAllocation(positions, total) {
+    const valued = positions.filter((p) => p.market_value > 0);
+    const TOP = 12;
+    const rows = valued.slice(0, TOP).map((p) => ({
+      label: p.symbol,
+      value: p.market_value,
+      valueLabel: fmtUSD0.format(p.market_value),
+      tip: `<div class="tt-title">${esc(p.symbol)}</div>` +
+           `<div class="tt-row">${fmtUSD.format(p.market_value)} · ${(p.market_value / total * 100).toFixed(1)}%</div>` +
+           `<div class="tt-row">${fmtQty.format(p.quantity)} sh @ ${money(p.price)}</div>`,
+    }));
+    const tail = valued.slice(TOP);
+    if (tail.length) {
+      const sum = tail.reduce((s, p) => s + p.market_value, 0);
+      rows.push({
+        label: "Other (" + tail.length + ")",
+        value: sum,
+        valueLabel: fmtUSD0.format(sum),
+        tip: `<div class="tt-title">Other</div><div class="tt-row">${tail.length} smaller positions · ${fmtUSD0.format(sum)} — see table</div>`,
+      });
+    }
+    hBarChart($("chart-allocation"), rows, { labelW: 88, ariaLabel: "Allocation by market value, largest first" });
+  }
+
+  // ---- holdings table ------------------------------------------------------
+
+  function retCell(v) {
+    return `<td class="num ${v === null || v === undefined ? "" : updown(v)}">${signedPct(v, 1)}</td>`;
   }
 
   function sparkline(values) {
     if (!values || values.length < 2) return "";
-    const W = 90, H = 26, pad = 2;
+    const W = 84, H = 24, pad = 2;
     const min = Math.min(...values), max = Math.max(...values);
     const span = max - min || 1;
     const step = (W - pad * 2) / (values.length - 1);
     const pts = values.map((v, i) =>
       `${(pad + i * step).toFixed(1)},${(H - pad - ((v - min) / span) * (H - pad * 2)).toFixed(1)}`);
-    return `<svg class="spark" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" aria-hidden="true"><path d="M${pts.join(" L")}"/></svg>`;
+    const first = pts[0].split(",");
+    const last = pts[pts.length - 1].split(",");
+    return `<svg class="spark" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" aria-hidden="true">
+      <path class="ar" d="M${first[0]},${H - pad} L${pts.join(" L")} L${last[0]},${H - pad} Z"/>
+      <path class="ln" d="M${pts.join(" L")}"/></svg>`;
   }
-
-  // ---- holdings table ------------------------------------------------------
 
   function renderTable(portfolio) {
     const tbody = $("holdings").querySelector("tbody");
@@ -237,11 +375,15 @@
     const t = portfolio.totals;
     tbody.innerHTML = portfolio.positions.map((p) => `
       <tr>
-        <td class="sym">${esc(p.symbol)}${p.live ? "" : '<span class="stale-dot" title="No live quote; using last stored price">○ stale</span>'}</td>
+        <td class="sym">${esc(p.symbol)}${p.live ? "" : '<span class="stale-dot" title="No live quote; using last stored price">stale</span>'}</td>
         <td class="num">${fmtQty.format(p.quantity)}</td>
         <td class="num">${money(p.avg_buy_price)}</td>
         <td class="num">${money(p.price)}</td>
-        <td class="num ${updown(p.day_change_pct || 0)}">${p.day_change_pct === null ? "—" : arrow(p.day_change_pct) + " " + signedPct(p.day_change_pct)}</td>
+        <td class="num ${p.day_change_pct === null ? "" : updown(p.day_change_pct)}">${p.day_change_pct === null ? "—" : arrow(p.day_change_pct) + " " + signedPct(p.day_change_pct)}</td>
+        ${retCell(p.returns && p.returns["1w"])}
+        ${retCell(p.returns && p.returns["1m"])}
+        ${retCell(p.returns && p.returns["3m"])}
+        <td class="num">${p.vol === null || p.vol === undefined ? "—" : p.vol.toFixed(0) + "%"}</td>
         <td class="num">${money(p.market_value)}</td>
         <td class="num ${p.unrealized_pl === null ? "" : updown(p.unrealized_pl)}">${signed(p.unrealized_pl)}</td>
         <td class="num ${p.unrealized_pl === null ? "" : updown(p.unrealized_pl)}">${p.unrealized_pl_pct === null ? "—" : signedPct(p.unrealized_pl_pct, 1)}</td>
@@ -251,6 +393,7 @@
       <tr>
         <td>Total</td><td></td><td></td><td></td>
         <td class="num ${updown(t.day_change)}">${signedPct(t.day_change_pct)}</td>
+        <td></td><td></td><td></td><td></td>
         <td class="num">${fmtUSD.format(t.market_value)}</td>
         <td class="num ${updown(t.unrealized_pl)}">${signed(t.unrealized_pl)}</td>
         <td class="num ${updown(t.unrealized_pl)}">${signedPct(t.unrealized_pl_pct, 1)}</td>
@@ -258,21 +401,20 @@
       </tr>`;
     $("holdings-asof").textContent = portfolio.market_time
       ? "prices as of " + new Date(portfolio.market_time * 1000).toLocaleString()
-      : (portfolio.as_of ? "as of " + portfolio.as_of : "");
+      : "";
   }
 
-  // ---- news ----------------------------------------------------------------
+  // ---- live status / countdown ---------------------------------------------
 
-  function renderNews(listEl, items, showTicker) {
-    listEl.innerHTML = items.map((n) => `
-      <li>
-        ${showTicker && n.ticker ? `<span class="news-ticker">${esc(n.ticker)}</span>` : ""}
-        <div>
-          <a class="news-title" href="${esc(n.link)}" target="_blank" rel="noopener noreferrer">${esc(n.title)}</a>
-          <span class="news-meta">${esc(n.source)}${n.published ? " · " + timeAgo(n.published) : ""}</span>
-        </div>
-      </li>`).join("") || "<li>No headlines right now.</li>";
-  }
+  let nextRefresh = Date.now() + REFRESH_MS;
+  let lastUpdated = null;
+
+  setInterval(() => {
+    if (!lastUpdated) return;
+    const secs = Math.max(0, Math.round((nextRefresh - Date.now()) / 1000));
+    $("live-status").textContent =
+      `LIVE · prices ${lastUpdated.toLocaleTimeString()} · next in ${secs}s`;
+  }, 1000);
 
   // ---- load ----------------------------------------------------------------
 
@@ -283,20 +425,30 @@
       if (resp.status === 401) { window.location.href = "/login"; return; }
       if (!resp.ok) throw new Error("HTTP " + resp.status);
       const data = await resp.json();
-      renderKpis(data.portfolio);
-      renderAllocation(data.portfolio.positions);
-      renderDayChange(data.portfolio.positions);
-      renderTable(data.portfolio);
-      renderNews($("news-portfolio"), data.news.portfolio, true);
-      renderNews($("news-market"), data.news.market, false);
-      $("updated").textContent = "Updated " + new Date(data.generated_at * 1000).toLocaleTimeString();
+      const pf = data.portfolio;
+      renderKpis(pf);
+      renderMovers(pf.positions, data.news.portfolio);
+      renderNews($("news-market"), data.news.market, false, 12);
+      renderPerf(pf.history);
+      renderPerfSide(pf);
+      renderSectors(pf.sectors, pf.totals.market_value);
+      renderAllocation(pf.positions, pf.totals.market_value);
+      renderTable(pf);
+      renderNews($("news-portfolio"), data.news.portfolio, true, 30);
+      const newsTimes = data.news.market.concat(data.news.portfolio)
+        .map((n) => n.published).filter(Boolean);
+      if (newsTimes.length) {
+        $("news-updated").textContent = "newest item " + timeAgo(Math.max(...newsTimes));
+      }
+      lastUpdated = new Date(data.generated_at * 1000);
       $("load-error").hidden = true;
     } catch (err) {
       const box = $("load-error");
-      box.textContent = "Could not refresh data (" + err.message + "). Showing last loaded values.";
+      box.textContent = "Could not refresh (" + err.message + "). Showing last loaded values.";
       box.hidden = false;
     } finally {
       main.dataset.loading = "false";
+      nextRefresh = Date.now() + REFRESH_MS;
     }
   }
 
