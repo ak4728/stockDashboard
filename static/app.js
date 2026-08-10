@@ -156,7 +156,34 @@
       </li>`).join("") || "<li>No headlines right now.</li>";
   }
 
-  // ---- performance vs SPY (3mo line chart, indexed) ------------------------
+  // ---- performance vs indices (interactive line chart, indexed) ------------
+
+  const BENCH_COLORS = {
+    SPY: "var(--bench-spy)",
+    QQQ: "var(--bench-qqq)",
+    DIA: "var(--bench-dia)",
+  };
+
+  const perfState = {
+    range: localStorage.getItem("perfRange") || "all",
+    bench: new Set(JSON.parse(localStorage.getItem("perfBench") || '["SPY"]')),
+  };
+
+  function savePerfState() {
+    localStorage.setItem("perfRange", perfState.range);
+    localStorage.setItem("perfBench", JSON.stringify([...perfState.bench]));
+  }
+
+  function renderPerfControls(history) {
+    document.querySelectorAll("#perf-range .chip").forEach((chip) => {
+      chip.setAttribute("aria-pressed", String(chip.dataset.range === perfState.range));
+    });
+    $("perf-bench").innerHTML = (history && history.benchmarks || []).map((b) => `
+      <button type="button" class="chip" data-sym="${esc(b.symbol)}" title="${esc(b.label)}"
+              aria-pressed="${perfState.bench.has(b.symbol)}">
+        <span class="dot" style="background:${BENCH_COLORS[b.symbol] || "var(--neutral-ln)"}"></span>${esc(b.symbol)}
+      </button>`).join("");
+  }
 
   function renderPerf(history) {
     const host = $("chart-perf");
@@ -165,22 +192,41 @@
       host.textContent = "Not enough history yet.";
       return;
     }
-    const days = history.days;
-    const port = history.value.map((v) => v / history.value[0] * 100);
-    const hasSpy = history.spy && history.spy[0];
-    const spy = hasSpy ? history.spy.map((v) => (v ? v / history.spy[0] * 100 : null)) : null;
+    const n = perfState.range === "21"
+      ? Math.min(22, history.days.length)
+      : history.days.length;
+    const days = history.days.slice(-n);
 
-    const W = 640, H = 240, L = 40, R = 78, T = 12, B = 26;
-    const all = port.concat(spy ? spy.filter((v) => v !== null) : []);
+    function rebase(vals) {
+      const sliced = vals.slice(-n);
+      const base = sliced.find((v) => v !== null && v !== undefined);
+      return sliced.map((v) => (v === null || v === undefined || !base ? null : v / base * 100));
+    }
+
+    const series = [
+      { label: "You", color: "var(--accent)", width: 2.4, vals: rebase(history.value) },
+    ];
+    (history.benchmarks || []).forEach((b) => {
+      if (perfState.bench.has(b.symbol)) {
+        series.push({
+          label: b.symbol,
+          color: BENCH_COLORS[b.symbol] || "var(--neutral-ln)",
+          width: 2,
+          vals: rebase(b.values),
+        });
+      }
+    });
+
+    const W = 640, H = 240, L = 40, R = 84, T = 12, B = 26;
+    const all = series.flatMap((s) => s.vals.filter((v) => v !== null));
     const lo = Math.min(...all), hi = Math.max(...all);
     const pad = (hi - lo) * 0.08 || 1;
     const y = (v) => T + (hi + pad - v) / (hi - lo + 2 * pad) * (H - T - B);
     const x = (i) => L + i / (days.length - 1) * (W - L - R);
 
     const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img",
-      "aria-label": "Portfolio vs S&P 500 over 3 months, indexed to 100" });
+      "aria-label": "Portfolio vs index benchmarks, indexed to 100" });
 
-    // horizontal hairlines + tick labels
     for (let g = 0; g < 4; g++) {
       const v = lo + (hi - lo) * g / 3;
       svg.append(svgEl("line", { x1: L, y1: y(v), x2: W - R, y2: y(v), class: "grid-line" }));
@@ -188,9 +234,9 @@
       t.textContent = v.toFixed(0);
       svg.append(t);
     }
-    // x tick labels: first, middle, last
     [0, Math.floor(days.length / 2), days.length - 1].forEach((i) => {
-      const t = svgEl("text", { x: x(i), y: H - 8, "text-anchor": i === 0 ? "start" : i === days.length - 1 ? "end" : "middle", class: "axis-tick" });
+      const t = svgEl("text", { x: x(i), y: H - 8,
+        "text-anchor": i === 0 ? "start" : i === days.length - 1 ? "end" : "middle", class: "axis-tick" });
       t.textContent = dayLabel(days[i]);
       svg.append(t);
     });
@@ -204,34 +250,42 @@
       return d;
     }
 
-    if (spy) {
-      svg.append(svgEl("path", { d: linePath(spy), fill: "none",
-        stroke: "var(--neutral-ln)", "stroke-width": 2 }));
-    }
-    svg.append(svgEl("path", { d: linePath(port), fill: "none",
-      stroke: "var(--accent)", "stroke-width": 2.4 }));
+    // benchmarks under, portfolio on top
+    series.slice(1).forEach((s) => {
+      svg.append(svgEl("path", { d: linePath(s.vals), fill: "none",
+        stroke: s.color, "stroke-width": s.width }));
+    });
+    svg.append(svgEl("path", { d: linePath(series[0].vals), fill: "none",
+      stroke: series[0].color, "stroke-width": series[0].width }));
 
-    // direct labels at line ends
-    const lastP = port[port.length - 1];
-    const labP = svgEl("text", { x: W - R + 8, y: y(lastP) + 4, class: "bar-label", fill: "var(--accent)" });
-    labP.textContent = `You ${signedPct(lastP - 100, 1)}`;
-    labP.style.fill = "var(--accent)";
-    svg.append(labP);
-    if (spy) {
-      const lastS = spy[spy.length - 1];
-      let ys = y(lastS) + 4;
-      if (Math.abs(ys - (y(lastP) + 4)) < 14) ys = y(lastP) + 4 + (ys >= y(lastP) + 4 ? 14 : -14);
-      const labS = svgEl("text", { x: W - R + 8, y: ys, class: "bar-label" });
-      labS.textContent = `SPY ${signedPct(lastS - 100, 1)}`;
-      svg.append(labS);
+    // direct labels at line ends, staggered so they never overlap
+    const labels = series
+      .map((s) => {
+        const last = [...s.vals].reverse().find((v) => v !== null);
+        return last === undefined ? null : { s, last, y: y(last) + 4 };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.y - b.y);
+    for (let i = 1; i < labels.length; i++) {
+      if (labels[i].y - labels[i - 1].y < 14) labels[i].y = labels[i - 1].y + 14;
     }
+    labels.forEach((l) => {
+      const t = svgEl("text", { x: W - R + 8, y: l.y, class: "bar-label" });
+      t.style.fill = l.s.color;
+      t.textContent = `${l.s.label} ${signedPct(l.last - 100, 1)}`;
+      svg.append(t);
+    });
 
     // crosshair + hover
     const cross = svgEl("line", { y1: T, y2: H - B, class: "axis-line", opacity: 0 });
-    const dotP = svgEl("circle", { r: 3.5, fill: "var(--accent)", opacity: 0 });
-    const dotS = svgEl("circle", { r: 3.5, fill: "var(--neutral-ln)", opacity: 0 });
+    svg.append(cross);
+    const dots = series.map((s) => {
+      const d = svgEl("circle", { r: 3.5, fill: s.color, opacity: 0 });
+      svg.append(d);
+      return d;
+    });
     const hit = svgEl("rect", { x: L, y: 0, width: W - L - R, height: H, fill: "transparent" });
-    svg.append(cross, dotP, dotS, hit);
+    svg.append(hit);
 
     hit.addEventListener("mousemove", (e) => {
       const rect = svg.getBoundingClientRect();
@@ -240,18 +294,20 @@
         Math.round((px - L) / (W - L - R) * (days.length - 1))));
       cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i));
       cross.setAttribute("opacity", 1);
-      dotP.setAttribute("cx", x(i)); dotP.setAttribute("cy", y(port[i])); dotP.setAttribute("opacity", 1);
-      let rows = `<div class="tt-row">Portfolio ${port[i].toFixed(1)} (${signedPct(port[i] - 100, 1)})</div>`;
-      if (spy && spy[i] !== null) {
-        dotS.setAttribute("cx", x(i)); dotS.setAttribute("cy", y(spy[i])); dotS.setAttribute("opacity", 1);
-        rows += `<div class="tt-row">S&amp;P 500 ${spy[i].toFixed(1)} (${signedPct(spy[i] - 100, 1)})</div>`;
-      }
+      let rows = "";
+      series.forEach((s, k) => {
+        const v = s.vals[i];
+        if (v === null) { dots[k].setAttribute("opacity", 0); return; }
+        dots[k].setAttribute("cx", x(i));
+        dots[k].setAttribute("cy", y(v));
+        dots[k].setAttribute("opacity", 1);
+        rows += `<div class="tt-row">${esc(s.label)} ${v.toFixed(1)} (${signedPct(v - 100, 1)})</div>`;
+      });
       showTooltip(e, `<div class="tt-title">${dayLabel(days[i])}</div>` + rows);
     });
     hit.addEventListener("mouseleave", () => {
       cross.setAttribute("opacity", 0);
-      dotP.setAttribute("opacity", 0);
-      dotS.setAttribute("opacity", 0);
+      dots.forEach((d) => d.setAttribute("opacity", 0));
       hideTooltip();
     });
 
@@ -265,7 +321,9 @@
     const worst = withRet.slice().sort((a, b) => a.returns["1m"] - b.returns["1m"])[0];
     const h = portfolio.history;
     const ret3m = h && h.value.length > 1 ? (h.value[h.value.length - 1] / h.value[0] - 1) * 100 : null;
-    const spy3m = h && h.spy && h.spy[0] ? (h.spy[h.spy.length - 1] / h.spy[0] - 1) * 100 : null;
+    const spyB = h && (h.benchmarks || []).find((b) => b.symbol === "SPY");
+    const spy3m = spyB && spyB.values[0]
+      ? (spyB.values[spyB.values.length - 1] / spyB.values[0] - 1) * 100 : null;
     host.innerHTML = `
       <div class="pstat">
         <p class="micro-label">Your 3-month return</p>
@@ -369,11 +427,40 @@
       <path class="ln" d="M${pts.join(" L")}"/></svg>`;
   }
 
+  const tableState = { key: "market_value", dir: -1, filter: "" };
+
+  function sortVal(p, key) {
+    switch (key) {
+      case "ret_1w": return p.returns ? p.returns["1w"] : null;
+      case "ret_1m": return p.returns ? p.returns["1m"] : null;
+      case "ret_3m": return p.returns ? p.returns["3m"] : null;
+      default: return p[key];
+    }
+  }
+
   function renderTable(portfolio) {
     const tbody = $("holdings").querySelector("tbody");
     const tfoot = $("holdings").querySelector("tfoot");
     const t = portfolio.totals;
-    tbody.innerHTML = portfolio.positions.map((p) => `
+
+    document.querySelectorAll("#holdings th.sortable").forEach((th) => {
+      th.removeAttribute("aria-sort");
+      if (th.dataset.key === tableState.key) {
+        th.setAttribute("aria-sort", tableState.dir === 1 ? "ascending" : "descending");
+      }
+    });
+
+    const rows = portfolio.positions
+      .filter((p) => !tableState.filter || p.symbol.toLowerCase().includes(tableState.filter))
+      .sort((a, b) => {
+        const va = sortVal(a, tableState.key), vb = sortVal(b, tableState.key);
+        if (va === null || va === undefined) return 1;   // nulls always last
+        if (vb === null || vb === undefined) return -1;
+        if (typeof va === "string") return va.localeCompare(vb) * tableState.dir;
+        return (va - vb) * tableState.dir;
+      });
+
+    tbody.innerHTML = rows.map((p) => `
       <tr>
         <td class="sym">${esc(p.symbol)}${p.live ? "" : '<span class="stale-dot" title="No live quote; using last stored price">stale</span>'}</td>
         <td class="num">${fmtQty.format(p.quantity)}</td>
@@ -416,6 +503,51 @@
       `LIVE · prices ${lastUpdated.toLocaleTimeString()} · next in ${secs}s`;
   }, 1000);
 
+  // ---- interactivity wiring ------------------------------------------------
+
+  let lastData = null;
+
+  $("perf-range").addEventListener("click", (e) => {
+    const chip = e.target.closest("button[data-range]");
+    if (!chip) return;
+    perfState.range = chip.dataset.range;
+    savePerfState();
+    if (lastData) {
+      renderPerfControls(lastData.portfolio.history);
+      renderPerf(lastData.portfolio.history);
+    }
+  });
+
+  $("perf-bench").addEventListener("click", (e) => {
+    const chip = e.target.closest("button[data-sym]");
+    if (!chip) return;
+    const sym = chip.dataset.sym;
+    if (perfState.bench.has(sym)) perfState.bench.delete(sym);
+    else perfState.bench.add(sym);
+    savePerfState();
+    if (lastData) {
+      renderPerfControls(lastData.portfolio.history);
+      renderPerf(lastData.portfolio.history);
+    }
+  });
+
+  document.querySelector("#holdings thead").addEventListener("click", (e) => {
+    const th = e.target.closest("th.sortable");
+    if (!th) return;
+    if (tableState.key === th.dataset.key) {
+      tableState.dir = -tableState.dir;
+    } else {
+      tableState.key = th.dataset.key;
+      tableState.dir = th.dataset.key === "symbol" ? 1 : -1;
+    }
+    if (lastData) renderTable(lastData.portfolio);
+  });
+
+  $("holdings-filter").addEventListener("input", (e) => {
+    tableState.filter = e.target.value.trim().toLowerCase();
+    if (lastData) renderTable(lastData.portfolio);
+  });
+
   // ---- load ----------------------------------------------------------------
 
   async function load() {
@@ -425,10 +557,12 @@
       if (resp.status === 401) { window.location.href = "/login"; return; }
       if (!resp.ok) throw new Error("HTTP " + resp.status);
       const data = await resp.json();
+      lastData = data;
       const pf = data.portfolio;
       renderKpis(pf);
       renderMovers(pf.positions, data.news.portfolio);
       renderNews($("news-market"), data.news.market, false, 12);
+      renderPerfControls(pf.history);
       renderPerf(pf.history);
       renderPerfSide(pf);
       renderSectors(pf.sectors, pf.totals.market_value);

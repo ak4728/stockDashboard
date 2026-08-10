@@ -16,7 +16,10 @@
   --border:      rgba(242, 244, 238, 0.08);
   --accent:      #a8c53c;   /* lime — portfolio line, brand, emphasis */
   --accent-dim:  #77894a;   /* olive — single-hue bars */
-  --neutral-ln:  #8a9086;   /* de-emphasis gray — benchmark line */
+  --neutral-ln:  #8a9086;   /* de-emphasis gray */
+  --bench-spy:   #9aa096;   /* benchmark lines: gray / blue / amber */
+  --bench-qqq:   #6da7ec;
+  --bench-dia:   #d9a13c;
   --up:          #8fc93a;
   --down:        #e06550;
   --focus:       #a8c53c;
@@ -269,6 +272,50 @@ button { font: inherit; }
 .axis-line { stroke: var(--baseline); stroke-width: 1; }
 .grid-line { stroke: var(--grid); stroke-width: 1; }
 .axis-tick { font-size: 11px; fill: var(--muted); font-family: var(--font-body); }
+
+.perf-head { justify-content: space-between; align-items: flex-start; }
+.holdings-head { justify-content: space-between; align-items: center; }
+.chart-controls { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+.chip-group { display: inline-flex; gap: 6px; }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+.chip:hover { border-color: var(--accent-dim); color: var(--text); }
+.chip[aria-pressed="true"] {
+  border-color: var(--accent-dim);
+  background: rgba(168, 197, 60, 0.10);
+  color: var(--text);
+}
+.chip .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.chip[aria-pressed="false"] .dot { opacity: 0.3; }
+
+.filter-input {
+  padding: 7px 12px;
+  border: 1px solid var(--baseline);
+  border-radius: 999px;
+  background: var(--inset);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  width: 170px;
+}
+.filter-input::placeholder { color: var(--muted); }
+
+.holdings th.sortable { cursor: pointer; user-select: none; }
+.holdings th.sortable:hover { color: var(--text-2); }
+.holdings th.sortable::after { content: "↕"; opacity: 0.35; margin-left: 4px; }
+.holdings th.sortable[aria-sort="ascending"]::after { content: "↑"; opacity: 1; color: var(--accent); }
+.holdings th.sortable[aria-sort="descending"]::after { content: "↓"; opacity: 1; color: var(--accent); }
 
 .perf-wrap {
   display: grid;

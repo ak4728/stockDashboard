@@ -268,9 +268,12 @@ def annualized_vol(closes):
     return (var ** 0.5) * (252 ** 0.5) * 100
 
 
+BENCHMARKS = {"SPY": "S&P 500", "QQQ": "Nasdaq 100", "DIA": "Dow Jones"}
+
+
 def build_history(holdings_positions, quotes):
     """Reconstruct daily portfolio value over ~3 months from per-symbol closes,
-    assuming current share counts. Also returns SPY closes for benchmarking."""
+    assuming current share counts. Also returns index-ETF closes as benchmarks."""
     by_day = {}
     day_sets = []
     for pos in holdings_positions:
@@ -285,9 +288,13 @@ def build_history(holdings_positions, quotes):
         return None
     days = sorted(set().union(*day_sets))[-64:]
     last_close = {}
-    values, spy_vals = [], []
-    spy_series = {t // 86400: c for t, c in (quotes.get("SPY") or {}).get("series", [])}
-    spy_last = None
+    values = []
+    bench_series = {
+        sym: {t // 86400: c for t, c in (quotes.get(sym) or {}).get("series", [])}
+        for sym in BENCHMARKS
+    }
+    bench_vals = {sym: [] for sym in BENCHMARKS}
+    bench_last = {}
     for day in days:
         total = 0.0
         for sym, (qty, series) in by_day.items():
@@ -296,9 +303,18 @@ def build_history(holdings_positions, quotes):
             if sym in last_close:
                 total += qty * last_close[sym]
         values.append(round(total, 2))
-        spy_last = spy_series.get(day, spy_last)
-        spy_vals.append(spy_last)
-    return {"days": days, "value": values, "spy": spy_vals}
+        for sym in BENCHMARKS:
+            bench_last[sym] = bench_series[sym].get(day, bench_last.get(sym))
+            bench_vals[sym].append(bench_last[sym])
+    return {
+        "days": days,
+        "value": values,
+        "benchmarks": [
+            {"symbol": sym, "label": label, "values": bench_vals[sym]}
+            for sym, label in BENCHMARKS.items()
+            if any(v is not None for v in bench_vals[sym])
+        ],
+    }
 
 
 def fetch_all_quotes(symbols):
@@ -317,7 +333,9 @@ def fetch_all_quotes(symbols):
 def build_portfolio():
     holdings = load_holdings()
     symbols = [p["symbol"] for p in holdings["positions"]]
-    quotes = cached("quotes", QUOTES_TTL, lambda: fetch_all_quotes(symbols))
+    # Always fetch benchmark ETFs too, even if not (or no longer) held.
+    fetch_syms = list(dict.fromkeys(symbols + list(BENCHMARKS)))
+    quotes = cached("quotes", QUOTES_TTL, lambda: fetch_all_quotes(fetch_syms))
 
     positions = []
     totals = {"market_value": 0.0, "cost_basis": 0.0, "day_change": 0.0}

@@ -79,9 +79,18 @@
 
     <!-- Performance vs benchmark -->
     <section class="card" aria-label="Performance vs S&P 500">
-      <header class="card-head">
-        <h2 class="card-title">Performance — you vs S&amp;P 500</h2>
-        <span class="card-sub">3 months, indexed to 100 · assumes current share counts</span>
+      <header class="card-head perf-head">
+        <div>
+          <h2 class="card-title">Performance — you vs the indices</h2>
+          <span class="card-sub">indexed to 100 · assumes current share counts</span>
+        </div>
+        <div class="chart-controls">
+          <div class="chip-group" id="perf-range" role="group" aria-label="Time range">
+            <button type="button" class="chip" data-range="21">1M</button>
+            <button type="button" class="chip" data-range="all">3M</button>
+          </div>
+          <div class="chip-group" id="perf-bench" role="group" aria-label="Benchmarks shown"></div>
+        </div>
       </header>
       <div class="perf-wrap">
         <div id="chart-perf" class="chart"></div>
@@ -109,26 +118,30 @@
 
     <!-- Holdings detail -->
     <section class="card" aria-label="Holdings">
-      <header class="card-head">
-        <h2 class="card-title">Holdings</h2>
-        <span class="card-sub" id="holdings-asof"></span>
+      <header class="card-head holdings-head">
+        <div>
+          <h2 class="card-title">Holdings</h2>
+          <span class="card-sub" id="holdings-asof"></span>
+        </div>
+        <input id="holdings-filter" class="filter-input" type="search"
+               placeholder="Filter symbol…" aria-label="Filter holdings by symbol">
       </header>
       <div class="table-wrap">
         <table id="holdings" class="holdings">
           <thead>
             <tr>
-              <th scope="col">Symbol</th>
-              <th scope="col" class="num">Qty</th>
-              <th scope="col" class="num">Avg cost</th>
-              <th scope="col" class="num">Price</th>
-              <th scope="col" class="num">Day</th>
-              <th scope="col" class="num">1W</th>
-              <th scope="col" class="num">1M</th>
-              <th scope="col" class="num">3M</th>
-              <th scope="col" class="num">Vol</th>
-              <th scope="col" class="num">Value</th>
-              <th scope="col" class="num">P/L</th>
-              <th scope="col" class="num">P/L %</th>
+              <th scope="col" class="sortable" data-key="symbol">Symbol</th>
+              <th scope="col" class="num sortable" data-key="quantity">Qty</th>
+              <th scope="col" class="num sortable" data-key="avg_buy_price">Avg cost</th>
+              <th scope="col" class="num sortable" data-key="price">Price</th>
+              <th scope="col" class="num sortable" data-key="day_change_pct">Day</th>
+              <th scope="col" class="num sortable" data-key="ret_1w">1W</th>
+              <th scope="col" class="num sortable" data-key="ret_1m">1M</th>
+              <th scope="col" class="num sortable" data-key="ret_3m">3M</th>
+              <th scope="col" class="num sortable" data-key="vol">Vol</th>
+              <th scope="col" class="num sortable" data-key="market_value">Value</th>
+              <th scope="col" class="num sortable" data-key="unrealized_pl">P/L</th>
+              <th scope="col" class="num sortable" data-key="unrealized_pl_pct">P/L %</th>
               <th scope="col">10d</th>
             </tr>
           </thead>
