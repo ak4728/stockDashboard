@@ -7,7 +7,10 @@ After=network.target
 
 [Service]
 WorkingDirectory=/var/www/stocksDashboard
-ExecStart=/var/www/stocksDashboard/venv/bin/gunicorn \
+# Launched via the venv's python symlink (-m gunicorn) rather than the
+# venv/bin/gunicorn script: SELinux blocks systemd from exec'ing scripts
+# under /var/www (203/EXEC), but the symlink resolves to /usr/bin/python3.
+ExecStart=/var/www/stocksDashboard/venv/bin/python3 -m gunicorn \
     --workers 1 \
     --threads 4 \
     --bind 127.0.0.1:8600 \
